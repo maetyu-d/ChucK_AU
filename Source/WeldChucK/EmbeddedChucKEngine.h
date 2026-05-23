@@ -33,6 +33,12 @@ public:
     static constexpr int maximumParameterCount = 32;
 
     bool prepare (double sampleRate, int maximumBlockSize, int inputChannels, int outputChannels);
+    bool prepare (double sampleRate,
+                  int maximumBlockSize,
+                  int inputChannels,
+                  int outputChannels,
+                  const juce::String& initialProgramBody,
+                  const std::vector<ParameterBinding>& initialBindings);
     void release() noexcept;
     bool loadProgram (const juce::String& programBody);
     bool loadProgram (const juce::String& programBody, const std::vector<ParameterBinding>& bindings);

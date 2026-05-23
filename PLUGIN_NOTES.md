@@ -19,6 +19,13 @@ The build copies the AU bundles into:
 ~/Library/Audio/Plug-Ins/Components/Live ChucK MIDI FX.component
 ```
 
+The editor has:
+
+- `Apply`: compile/run the current editor text.
+- `Load`: load a plain text code example into the editor without applying it.
+- `Save`: save the current editor text as a reusable code example.
+- `Reset`: restore the built-in starter program.
+
 Validate them with:
 
 ```sh

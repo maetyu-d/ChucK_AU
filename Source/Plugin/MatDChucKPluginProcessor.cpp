@@ -138,10 +138,12 @@ void MatDChucKAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
     const auto inputChannels = juce::jmax (1, getTotalNumInputChannels());
     const auto outputChannels = juce::jlimit (1, 2, getTotalNumOutputChannels());
     const auto blockSize = juce::jmax (1, samplesPerBlock);
-    auto ok = engine.prepare (sampleRate, blockSize, inputChannels, outputChannels);
-
-    if (ok)
-        ok = engine.loadProgram (getProgramText(), getHostParameterBindings());
+    const auto ok = engine.prepare (sampleRate,
+                                    blockSize,
+                                    inputChannels,
+                                    outputChannels,
+                                    getProgramText(),
+                                    getHostParameterBindings());
 
     const juce::ScopedLock lock (stateLock);
     statusText = ok ? "Audio engine ready" : ("Audio engine error: " + engine.getLastError());

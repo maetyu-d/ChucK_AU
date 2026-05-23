@@ -15,6 +15,7 @@ MatDChucKPluginEditor::MatDChucKPluginEditor (MatDChucKAudioProcessor& owner)
 {
     setSize (820, 560);
     codeDocument.replaceAllContent (owner.getProgramText());
+    lastCodeDirectory = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
 
     titleLabel.setText (ownerProcessor.getName(), juce::dontSendNotification);
     titleLabel.setColour (juce::Label::textColourId, textColour());
@@ -22,12 +23,20 @@ MatDChucKPluginEditor::MatDChucKPluginEditor (MatDChucKAudioProcessor& owner)
     addAndMakeVisible (titleLabel);
 
     applyButton.addListener (this);
+    loadButton.addListener (this);
+    saveButton.addListener (this);
     resetButton.addListener (this);
     applyButton.setColour (juce::TextButton::buttonColourId, accentColour());
     applyButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+    loadButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff30343b));
+    loadButton.setColour (juce::TextButton::textColourOffId, textColour());
+    saveButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff30343b));
+    saveButton.setColour (juce::TextButton::textColourOffId, textColour());
     resetButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff30343b));
     resetButton.setColour (juce::TextButton::textColourOffId, textColour());
     addAndMakeVisible (applyButton);
+    addAndMakeVisible (loadButton);
+    addAndMakeVisible (saveButton);
     addAndMakeVisible (resetButton);
 
     editor.setFont (juce::FontOptions (15.0f));
@@ -50,6 +59,8 @@ MatDChucKPluginEditor::~MatDChucKPluginEditor()
 {
     stopTimer();
     applyButton.removeListener (this);
+    loadButton.removeListener (this);
+    saveButton.removeListener (this);
     resetButton.removeListener (this);
 }
 
@@ -67,6 +78,10 @@ void MatDChucKPluginEditor::resized()
 
     titleLabel.setBounds (header.removeFromLeft (360));
     resetButton.setBounds (header.removeFromRight (92).reduced (0, 2));
+    header.removeFromRight (8);
+    saveButton.setBounds (header.removeFromRight (92).reduced (0, 2));
+    header.removeFromRight (8);
+    loadButton.setBounds (header.removeFromRight (92).reduced (0, 2));
     header.removeFromRight (8);
     applyButton.setBounds (header.removeFromRight (100).reduced (0, 2));
 
@@ -89,6 +104,14 @@ void MatDChucKPluginEditor::buttonClicked (juce::Button* button)
         codeDocument.replaceAllContent (ownerProcessor.getProgramText());
         refreshStatus();
     }
+    else if (button == &loadButton)
+    {
+        loadCodeFromFile();
+    }
+    else if (button == &saveButton)
+    {
+        saveCodeToFile();
+    }
 }
 
 void MatDChucKPluginEditor::timerCallback()
@@ -99,4 +122,102 @@ void MatDChucKPluginEditor::timerCallback()
 void MatDChucKPluginEditor::refreshStatus()
 {
     statusLabel.setText (ownerProcessor.getStatusText(), juce::dontSendNotification);
+}
+
+void MatDChucKPluginEditor::loadCodeFromFile()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Load code example",
+                                                       lastCodeDirectory,
+                                                       getFilePatterns(),
+                                                       true,
+                                                       false,
+                                                       this);
+
+    const auto flags = juce::FileBrowserComponent::openMode
+                     | juce::FileBrowserComponent::canSelectFiles;
+
+    fileChooser->launchAsync (flags, [this] (const juce::FileChooser& chooser)
+    {
+        const auto file = chooser.getResult();
+
+        if (file == juce::File())
+            return;
+
+        lastCodeDirectory = file.getParentDirectory();
+        const auto text = file.loadFileAsString();
+
+        if (! file.existsAsFile() || text.isEmpty())
+        {
+            showFileError ("Load failed", "Could not read a code file from the selected path.");
+            return;
+        }
+
+        codeDocument.replaceAllContent (text);
+        statusLabel.setText ("Loaded " + file.getFileName() + " - press Apply to run it",
+                             juce::dontSendNotification);
+    });
+}
+
+void MatDChucKPluginEditor::saveCodeToFile()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Save code example",
+                                                       getDefaultCodeFile(),
+                                                       getFilePatterns(),
+                                                       true,
+                                                       false,
+                                                       this);
+
+    const auto flags = juce::FileBrowserComponent::saveMode
+                     | juce::FileBrowserComponent::canSelectFiles
+                     | juce::FileBrowserComponent::warnAboutOverwriting;
+
+    fileChooser->launchAsync (flags, [this] (const juce::FileChooser& chooser)
+    {
+        auto file = chooser.getResult();
+
+        if (file == juce::File())
+            return;
+
+        if (! file.hasFileExtension (getFilePatterns()))
+            file = file.withFileExtension (MATD_CHUCK_MIDI_FX ? ".txt" : ".ck");
+
+        lastCodeDirectory = file.getParentDirectory();
+
+        if (! file.replaceWithText (codeDocument.getAllContent()))
+        {
+            showFileError ("Save failed", "Could not write the code file.");
+            return;
+        }
+
+        statusLabel.setText ("Saved " + file.getFileName(), juce::dontSendNotification);
+    });
+}
+
+void MatDChucKPluginEditor::showFileError (const juce::String& title, const juce::String& message)
+{
+    const auto options = juce::MessageBoxOptions::makeOptionsOk (juce::AlertWindow::WarningIcon,
+                                                                title,
+                                                                message);
+    messageBox = juce::AlertWindow::showScopedAsync (options, nullptr);
+}
+
+juce::String MatDChucKPluginEditor::getFilePatterns() const
+{
+#if MATD_CHUCK_MIDI_FX
+    return "*.txt;*.midifx;*";
+#else
+    return "*.ck;*.chuck;*.txt;*";
+#endif
+}
+
+juce::File MatDChucKPluginEditor::getDefaultCodeFile() const
+{
+    const auto directory = lastCodeDirectory.exists() ? lastCodeDirectory
+                                                      : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+
+#if MATD_CHUCK_MIDI_FX
+    return directory.getChildFile ("Live ChucK MIDI FX Example.txt");
+#else
+    return directory.getChildFile ("Live ChucK Example.ck");
+#endif
 }

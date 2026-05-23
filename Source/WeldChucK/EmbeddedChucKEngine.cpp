@@ -151,6 +151,21 @@ EmbeddedChucKEngine::~EmbeddedChucKEngine()
 
 bool EmbeddedChucKEngine::prepare (double sampleRate, int maximumBlockSize, int inputChannels, int outputChannels)
 {
+    return prepare (sampleRate,
+                    maximumBlockSize,
+                    inputChannels,
+                    outputChannels,
+                    getDefaultProgram(),
+                    getDefaultParameterBindings());
+}
+
+bool EmbeddedChucKEngine::prepare (double sampleRate,
+                                   int maximumBlockSize,
+                                   int inputChannels,
+                                   int outputChannels,
+                                   const juce::String& initialProgramBody,
+                                   const std::vector<ParameterBinding>& initialBindings)
+{
     const juce::ScopedLock lock (engineLock);
 
     try
@@ -185,15 +200,22 @@ bool EmbeddedChucKEngine::prepare (double sampleRate, int maximumBlockSize, int 
         interleavedInput.assign (static_cast<size_t> (maxBlockSize) * static_cast<size_t> (numInputChannels), 0.0f);
         interleavedOutput.assign (static_cast<size_t> (maxBlockSize) * static_cast<size_t> (numOutputChannels), 0.0f);
 
+        std::vector<ParameterBinding> bindings = initialBindings;
+        juce::String validationError;
+        if (! validateParameterBindings (bindings, validationError))
+        {
+            lastError = validationError;
+            releaseUnlocked();
+            return false;
+        }
+
         CandidateProgram candidate;
         juce::String candidateError;
-        const auto programBody = getDefaultProgram();
-        const auto bindings = getDefaultParameterBindings();
         if (! initialiseCandidate (candidate,
                                    currentSampleRate,
                                    numInputChannels,
                                    numOutputChannels,
-                                   programBody,
+                                   initialProgramBody,
                                    bindings,
                                    candidateError))
         {
@@ -210,7 +232,7 @@ bool EmbeddedChucKEngine::prepare (double sampleRate, int maximumBlockSize, int 
             values.push_back (binding.defaultValue);
 
         applyParameterSlots (bindings, values, candidate.parameterPointers);
-        currentProgram = programBody;
+        currentProgram = initialProgramBody;
         ++engineGeneration;
         programLoadSuccessCount.fetch_add (1, std::memory_order_relaxed);
         pushGlobals();
