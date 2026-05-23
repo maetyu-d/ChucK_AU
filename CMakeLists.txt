@@ -190,3 +190,71 @@ set_tests_properties(WeldChucKSelfTest
 add_custom_target(check
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
     DEPENDS WeldChucK WeldChucKEngineBoundaryTest)
+
+set(MATD_CHUCK_PLUGIN_SOURCES
+    Source/Plugin/MatDChucKPluginProcessor.cpp
+    Source/Plugin/MatDChucKPluginProcessor.h
+    Source/Plugin/MatDChucKPluginEditor.cpp
+    Source/Plugin/MatDChucKPluginEditor.h)
+
+juce_add_plugin(MatDLiveChucK
+    COMPANY_NAME "matd.space"
+    BUNDLE_ID "space.matd.livechuck"
+    PLUGIN_MANUFACTURER_CODE MtDs
+    PLUGIN_CODE LChk
+    FORMATS AU
+    PRODUCT_NAME "Live ChucK"
+    DESCRIPTION "Live-coded ChucK audio unit"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    PRODUCES_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    COPY_PLUGIN_AFTER_BUILD TRUE)
+
+target_sources(MatDLiveChucK PRIVATE ${MATD_CHUCK_PLUGIN_SOURCES})
+
+target_compile_definitions(MatDLiveChucK
+    PRIVATE
+        MATD_CHUCK_MIDI_FX=0
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0)
+
+target_link_libraries(MatDLiveChucK
+    PRIVATE
+        WeldChucK::Engine
+        juce::juce_audio_processors
+        juce::juce_gui_extra
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)
+
+juce_add_plugin(MatDLiveChucKMidiFX
+    COMPANY_NAME "matd.space"
+    BUNDLE_ID "space.matd.livechuck.midifx"
+    PLUGIN_MANUFACTURER_CODE MtDs
+    PLUGIN_CODE LcMF
+    FORMATS AU
+    PRODUCT_NAME "Live ChucK MIDI FX"
+    DESCRIPTION "Live-coded ChucK MIDI FX audio unit"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT TRUE
+    PRODUCES_MIDI_OUTPUT TRUE
+    IS_MIDI_EFFECT TRUE
+    COPY_PLUGIN_AFTER_BUILD TRUE)
+
+target_sources(MatDLiveChucKMidiFX PRIVATE ${MATD_CHUCK_PLUGIN_SOURCES})
+
+target_compile_definitions(MatDLiveChucKMidiFX
+    PRIVATE
+        MATD_CHUCK_MIDI_FX=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0)
+
+target_link_libraries(MatDLiveChucKMidiFX
+    PRIVATE
+        WeldChucK::Engine
+        juce::juce_audio_processors
+        juce::juce_gui_extra
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)
