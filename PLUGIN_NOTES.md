@@ -88,9 +88,11 @@ Examples/automation-demo.ck
 Examples/pulse-garden.ck
 Examples/shimmer-pad.ck
 Examples/clockwork-lead.ck
+Examples/final-arrangement.ck
 Examples/midi-fx-arpeggio.txt
 Examples/midi-glass-cascade.txt
 Examples/midi-pulse-stack.txt
+Examples/midi-final-arrangement.txt
 ```
 
 Paste `audio-arpeggio.ck` into `Live ChucK`. It uses `hostTempo` to calculate sixteenth-note timing.
