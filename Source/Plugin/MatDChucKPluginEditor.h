@@ -36,6 +36,7 @@ private:
     juce::ComboBox exampleBox;
     juce::Label titleLabel;
     juce::Label statusLabel;
+    juce::TextEditor statusConsole;
     std::unique_ptr<juce::FileChooser> fileChooser;
     juce::ScopedMessageBox messageBox;
     juce::File lastCodeDirectory;

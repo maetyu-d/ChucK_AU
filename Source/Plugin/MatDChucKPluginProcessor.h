@@ -51,9 +51,21 @@ private:
     {
         bool isPlaying = false;
         double bpm = 120.0;
+        double ppqPosition = 0.0;
+        double ppqLastBarStart = 0.0;
+        double beatInBar = 0.0;
+        double barCount = 0.0;
+        double timeInSeconds = 0.0;
+        double timeInSamples = 0.0;
+        double sampleRate = 44100.0;
+        double timeSigNumerator = 4.0;
+        double timeSigDenominator = 4.0;
     };
 
     HostTransportState readHostTransportState() const;
+    void createHostParameters();
+    void saveHostParameters (juce::XmlElement& state) const;
+    void restoreHostParameters (const juce::XmlElement& state);
 
 #if MATD_CHUCK_MIDI_FX
     struct MidiPattern
@@ -88,6 +100,10 @@ private:
     mutable juce::CriticalSection stateLock;
     juce::String programText;
     juce::String statusText;
+    juce::AudioParameterFloat* gainParameter = nullptr;
+    juce::AudioParameterFloat* control1Parameter = nullptr;
+    juce::AudioParameterFloat* control2Parameter = nullptr;
+    juce::AudioParameterFloat* control3Parameter = nullptr;
     std::atomic<bool> prepared { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MatDChucKAudioProcessor)

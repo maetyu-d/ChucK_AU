@@ -62,6 +62,16 @@ MatDChucKPluginEditor::MatDChucKPluginEditor (MatDChucKAudioProcessor& owner)
     statusLabel.setFont (juce::FontOptions (13.0f));
     addAndMakeVisible (statusLabel);
 
+    statusConsole.setMultiLine (true);
+    statusConsole.setReadOnly (true);
+    statusConsole.setScrollbarsShown (true);
+    statusConsole.setCaretVisible (false);
+    statusConsole.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff111317));
+    statusConsole.setColour (juce::TextEditor::textColourId, juce::Colour (0xffcfd6df));
+    statusConsole.setColour (juce::TextEditor::outlineColourId, juce::Colour (0xff2b2f36));
+    statusConsole.setFont (juce::FontOptions (12.0f));
+    addAndMakeVisible (statusConsole);
+
     startTimerHz (8);
 }
 
@@ -99,7 +109,9 @@ void MatDChucKPluginEditor::resized()
     applyButton.setBounds (header.removeFromRight (82).reduced (0, 2));
 
     bounds.removeFromTop (10);
-    statusLabel.setBounds (bounds.removeFromBottom (28));
+    statusConsole.setBounds (bounds.removeFromBottom (76));
+    bounds.removeFromBottom (8);
+    statusLabel.setBounds (bounds.removeFromBottom (24));
     bounds.removeFromBottom (8);
     editor.setBounds (bounds);
 }
@@ -134,8 +146,9 @@ void MatDChucKPluginEditor::comboBoxChanged (juce::ComboBox* comboBox)
 
     const auto exampleName = exampleBox.getText();
     codeDocument.replaceAllContent (MatDChucKAudioProcessor::getBuiltInExample (exampleName));
-    statusLabel.setText ("Loaded " + exampleName + " - press Apply to run it",
-                         juce::dontSendNotification);
+    const auto message = "Loaded " + exampleName + " - press Apply to run it";
+    statusLabel.setText (message, juce::dontSendNotification);
+    statusConsole.setText (message, false);
     exampleBox.setSelectedId (0, juce::dontSendNotification);
 }
 
@@ -146,7 +159,10 @@ void MatDChucKPluginEditor::timerCallback()
 
 void MatDChucKPluginEditor::refreshStatus()
 {
-    statusLabel.setText (ownerProcessor.getStatusText(), juce::dontSendNotification);
+    const auto status = ownerProcessor.getStatusText();
+    statusLabel.setText (status.upToFirstOccurrenceOf ("\n", false, false), juce::dontSendNotification);
+    if (statusConsole.getText() != status)
+        statusConsole.setText (status, false);
 }
 
 void MatDChucKPluginEditor::loadCodeFromFile()
@@ -178,8 +194,9 @@ void MatDChucKPluginEditor::loadCodeFromFile()
         }
 
         codeDocument.replaceAllContent (text);
-        statusLabel.setText ("Loaded " + file.getFileName() + " - press Apply to run it",
-                             juce::dontSendNotification);
+        const auto message = "Loaded " + file.getFileName() + " - press Apply to run it";
+        statusLabel.setText (message, juce::dontSendNotification);
+        statusConsole.setText (message, false);
     });
 }
 
@@ -214,7 +231,9 @@ void MatDChucKPluginEditor::saveCodeToFile()
             return;
         }
 
-        statusLabel.setText ("Saved " + file.getFileName(), juce::dontSendNotification);
+        const auto message = "Saved " + file.getFileName();
+        statusLabel.setText (message, juce::dontSendNotification);
+        statusConsole.setText (message, false);
     });
 }
 

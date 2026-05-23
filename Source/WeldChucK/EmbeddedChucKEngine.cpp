@@ -2,6 +2,7 @@
 
 #include "chuck.h"
 #include "chuck_globals.h"
+#include "chuck_errmsg.h"
 
 #include <algorithm>
 #include <cctype>
@@ -120,9 +121,14 @@ bool initialiseCandidate (CandidateProgram& candidate,
         return false;
     }
 
+    EM_reset_msg();
+
     if (! candidate.chuck->compileCode (buildCompleteProgram (programBody, bindings).toStdString(), "", 1, TRUE))
     {
-        error = "ChucK program did not compile";
+        const auto* lastCompileError = EM_lasterror();
+        error = lastCompileError != nullptr && lastCompileError[0] != '\0'
+                    ? juce::String ("ChucK compile error:\n") + lastCompileError
+                    : "ChucK program did not compile";
         return false;
     }
 

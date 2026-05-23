@@ -1,6 +1,5 @@
 TriOsc osc => ADSR env => Gain master => dac;
 
-0.16 => master.gain;
 env.set (6::ms, 35::ms, 0.35, 80::ms);
 
 [0, 4, 7, 12, 7, 4] @=> int intervals[];
@@ -9,6 +8,7 @@ env.set (6::ms, 35::ms, 0.35, 80::ms);
 
 while (true)
 {
+    Math.max(0.0, Math.min(hostParamGain, 1.0)) => master.gain;
     Std.mtof (root + intervals[step]) => osc.freq;
     env.keyOn();
 

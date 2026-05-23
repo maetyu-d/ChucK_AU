@@ -22,6 +22,7 @@ The build copies the AU bundles into:
 The editor has:
 
 - `Apply`: compile/run the current editor text.
+- A status console: shows full ChucK compiler errors and file messages.
 - `Examples`: load a built-in starter or arpeggio into the editor without applying it.
 - `Load`: load a plain text code example into the editor without applying it.
 - `Save`: save the current editor text as a reusable code example.
@@ -41,6 +42,18 @@ The audio plugin advances ChucK only while the host transport is playing. It inj
 ```chuck
 hostTempo              // current host tempo in BPM
 hostTransportPlaying   // 1.0 while the transport is playing, 0.0 while stopped
+hostPpq                // host song position in quarter notes
+hostBeat               // beat offset from the current bar start
+hostBar                // host bar count when available
+hostSampleRate         // current audio sample rate
+hostTimeSeconds        // host timeline position in seconds
+hostTimeSamples        // host timeline position in samples
+hostTimeSigNumerator
+hostTimeSigDenominator
+hostParamGain          // Logic-automatable ChucK Gain parameter
+hostParam1             // Logic-automatable ChucK Control 1
+hostParam2             // Logic-automatable ChucK Control 2
+hostParam3             // Logic-automatable ChucK Control 3
 ```
 
 Example:

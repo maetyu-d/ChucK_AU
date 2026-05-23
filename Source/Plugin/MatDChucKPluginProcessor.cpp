@@ -12,10 +12,9 @@ juce::String audioDefaultProgram()
 SinOsc left => Gain master => dac;
 TriOsc right => master => dac;
 
-0.12 => master.gain;
-
 while (true)
 {
+    Math.max(0.0, Math.min(hostParamGain, 1.0)) => master.gain;
     Math.max(20.0, hostTempo) * 2.0 => float base;
     base => left.freq;
     base * 1.005 => right.freq;
@@ -29,7 +28,6 @@ juce::String audioArpeggioProgram()
     return R"chuck(
 TriOsc osc => ADSR env => Gain master => dac;
 
-0.16 => master.gain;
 env.set (6::ms, 35::ms, 0.35, 80::ms);
 
 [0, 4, 7, 12, 7, 4] @=> int intervals[];
@@ -38,6 +36,7 @@ env.set (6::ms, 35::ms, 0.35, 80::ms);
 
 while (true)
 {
+    Math.max(0.0, Math.min(hostParamGain, 1.0)) => master.gain;
     Std.mtof (root + intervals[step]) => osc.freq;
     env.keyOn();
 
@@ -96,6 +95,11 @@ int beatsToSamples (double sampleRate, double bpm, double beats)
     return juce::jmax (1, juce::roundToInt (sampleRate * seconds));
 }
 #endif
+
+float getParameterValueOrDefault (const juce::AudioParameterFloat* parameter, float fallback) noexcept
+{
+    return parameter != nullptr ? parameter->get() : fallback;
+}
 }
 
 MatDChucKAudioProcessor::MatDChucKAudioProcessor()
@@ -111,6 +115,7 @@ MatDChucKAudioProcessor::MatDChucKAudioProcessor()
       programText (getBuiltInProgram()),
       statusText ("Ready")
 {
+    createHostParameters();
 }
 
 MatDChucKAudioProcessor::~MatDChucKAudioProcessor() = default;
@@ -161,10 +166,80 @@ MatDChucKAudioProcessor::HostTransportState MatDChucKAudioProcessor::readHostTra
         {
             state.isPlaying = position->getIsPlaying();
             state.bpm = sanitiseBpm (position->getBpm());
+
+            if (auto ppq = position->getPpqPosition())
+                state.ppqPosition = *ppq;
+
+            if (auto lastBar = position->getPpqPositionOfLastBarStart())
+                state.ppqLastBarStart = *lastBar;
+
+            if (auto bar = position->getBarCount())
+                state.barCount = static_cast<double> (*bar);
+
+            if (auto seconds = position->getTimeInSeconds())
+                state.timeInSeconds = *seconds;
+
+            if (auto samples = position->getTimeInSamples())
+                state.timeInSamples = static_cast<double> (*samples);
+
+            if (auto sig = position->getTimeSignature())
+            {
+                state.timeSigNumerator = static_cast<double> (sig->numerator);
+                state.timeSigDenominator = static_cast<double> (sig->denominator);
+            }
+
+            state.beatInBar = state.ppqPosition - state.ppqLastBarStart;
         }
     }
 
+    state.sampleRate = getSampleRate() > 0.0 ? getSampleRate() : state.sampleRate;
     return state;
+}
+
+void MatDChucKAudioProcessor::createHostParameters()
+{
+    const auto addFloatParameter = [this] (juce::AudioParameterFloat*& target,
+                                           const juce::String& id,
+                                           const juce::String& name,
+                                           float minimum,
+                                           float maximum,
+                                           float defaultValue)
+    {
+        auto parameter = std::make_unique<juce::AudioParameterFloat> (id, name, minimum, maximum, defaultValue);
+        target = parameter.get();
+        addParameter (parameter.release());
+    };
+
+    addFloatParameter (gainParameter, "hostParamGain", "ChucK Gain", 0.0f, 1.0f, 0.14f);
+    addFloatParameter (control1Parameter, "hostParam1", "ChucK Control 1", 0.0f, 1.0f, 0.0f);
+    addFloatParameter (control2Parameter, "hostParam2", "ChucK Control 2", 0.0f, 1.0f, 0.0f);
+    addFloatParameter (control3Parameter, "hostParam3", "ChucK Control 3", 0.0f, 1.0f, 0.0f);
+}
+
+void MatDChucKAudioProcessor::saveHostParameters (juce::XmlElement& state) const
+{
+    state.setAttribute ("hostParamGain", static_cast<double> (getParameterValueOrDefault (gainParameter, 0.14f)));
+    state.setAttribute ("hostParam1", static_cast<double> (getParameterValueOrDefault (control1Parameter, 0.0f)));
+    state.setAttribute ("hostParam2", static_cast<double> (getParameterValueOrDefault (control2Parameter, 0.0f)));
+    state.setAttribute ("hostParam3", static_cast<double> (getParameterValueOrDefault (control3Parameter, 0.0f)));
+}
+
+void MatDChucKAudioProcessor::restoreHostParameters (const juce::XmlElement& state)
+{
+    const auto restore = [&state] (juce::AudioParameterFloat* parameter, const juce::String& attribute)
+    {
+        if (parameter == nullptr || ! state.hasAttribute (attribute))
+            return;
+
+        const auto value = static_cast<float> (state.getDoubleAttribute (attribute, parameter->get()));
+        const auto normalised = parameter->getNormalisableRange().convertTo0to1 (value);
+        parameter->setValueNotifyingHost (normalised);
+    };
+
+    restore (gainParameter, "hostParamGain");
+    restore (control1Parameter, "hostParam1");
+    restore (control2Parameter, "hostParam2");
+    restore (control3Parameter, "hostParam3");
 }
 
 void MatDChucKAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -270,6 +345,7 @@ void MatDChucKAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = std::make_unique<juce::XmlElement> (stateTag());
     state->setAttribute ("program", getProgramText());
+    saveHostParameters (*state);
     copyXmlToBinary (*state, destData);
 }
 
@@ -280,6 +356,7 @@ void MatDChucKAudioProcessor::setStateInformation (const void* data, int sizeInB
         return;
 
     applyProgramFromEditor (state->getStringAttribute ("program", getBuiltInProgram()));
+    restoreHostParameters (*state);
 }
 
 juce::String MatDChucKAudioProcessor::getProgramText() const
@@ -316,10 +393,10 @@ bool MatDChucKAudioProcessor::applyProgramFromEditor (const juce::String& newPro
         return true;
     }
 
-    const auto queued = engine.loadProgramAsync (newProgram, getHostParameterBindings());
+    const auto loaded = engine.loadProgram (newProgram, getHostParameterBindings());
     const juce::ScopedLock lock (stateLock);
-    statusText = queued ? "ChucK program queued" : ("ChucK error: " + engine.getLastError());
-    return queued;
+    statusText = loaded ? "ChucK program applied" : engine.getLastError();
+    return loaded;
 #endif
 }
 
@@ -367,7 +444,19 @@ std::vector<EmbeddedChucKEngine::ParameterBinding> MatDChucKAudioProcessor::getH
     return
     {
         { "hostTempo", 120.0f, 20.0f, 999.0f },
-        { "hostTransportPlaying", 0.0f, 0.0f, 1.0f }
+        { "hostTransportPlaying", 0.0f, 0.0f, 1.0f },
+        { "hostPpq", 0.0f, -1000000.0f, 1000000.0f },
+        { "hostBeat", 0.0f, -1000000.0f, 1000000.0f },
+        { "hostBar", 0.0f, -1000000.0f, 1000000.0f },
+        { "hostSampleRate", 44100.0f, 1.0f, 384000.0f },
+        { "hostTimeSeconds", 0.0f, -1000000.0f, 1000000.0f },
+        { "hostTimeSamples", 0.0f, -1000000000.0f, 1000000000.0f },
+        { "hostTimeSigNumerator", 4.0f, 1.0f, 64.0f },
+        { "hostTimeSigDenominator", 4.0f, 1.0f, 64.0f },
+        { "hostParamGain", 0.14f, 0.0f, 1.0f },
+        { "hostParam1", 0.0f, 0.0f, 1.0f },
+        { "hostParam2", 0.0f, 0.0f, 1.0f },
+        { "hostParam3", 0.0f, 0.0f, 1.0f }
     };
 }
 
@@ -375,6 +464,18 @@ void MatDChucKAudioProcessor::updateHostGlobals (const HostTransportState& trans
 {
     static_cast<void> (engine.setParameterValue ("hostTempo", static_cast<float> (transport.bpm)));
     static_cast<void> (engine.setParameterValue ("hostTransportPlaying", transport.isPlaying ? 1.0f : 0.0f));
+    static_cast<void> (engine.setParameterValue ("hostPpq", static_cast<float> (transport.ppqPosition)));
+    static_cast<void> (engine.setParameterValue ("hostBeat", static_cast<float> (transport.beatInBar)));
+    static_cast<void> (engine.setParameterValue ("hostBar", static_cast<float> (transport.barCount)));
+    static_cast<void> (engine.setParameterValue ("hostSampleRate", static_cast<float> (transport.sampleRate)));
+    static_cast<void> (engine.setParameterValue ("hostTimeSeconds", static_cast<float> (transport.timeInSeconds)));
+    static_cast<void> (engine.setParameterValue ("hostTimeSamples", static_cast<float> (transport.timeInSamples)));
+    static_cast<void> (engine.setParameterValue ("hostTimeSigNumerator", static_cast<float> (transport.timeSigNumerator)));
+    static_cast<void> (engine.setParameterValue ("hostTimeSigDenominator", static_cast<float> (transport.timeSigDenominator)));
+    static_cast<void> (engine.setParameterValue ("hostParamGain", getParameterValueOrDefault (gainParameter, 0.14f)));
+    static_cast<void> (engine.setParameterValue ("hostParam1", getParameterValueOrDefault (control1Parameter, 0.0f)));
+    static_cast<void> (engine.setParameterValue ("hostParam2", getParameterValueOrDefault (control2Parameter, 0.0f)));
+    static_cast<void> (engine.setParameterValue ("hostParam3", getParameterValueOrDefault (control3Parameter, 0.0f)));
 }
 #endif
 
