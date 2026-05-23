@@ -1,6 +1,8 @@
 #include "MatDChucKPluginProcessor.h"
 #include "MatDChucKPluginEditor.h"
 
+#include <cmath>
+
 namespace
 {
 #if ! MATD_CHUCK_MIDI_FX
@@ -11,10 +13,10 @@ SinOsc left => Gain master => dac;
 TriOsc right => master => dac;
 
 0.12 => master.gain;
-220.0 => float base;
 
 while (true)
 {
+    Math.max(20.0, hostTempo) * 2.0 => float base;
     base => left.freq;
     base * 1.005 => right.freq;
     20::ms => now;
@@ -37,6 +39,15 @@ note 67 72 90 1000
 #endif
 
 juce::String stateTag() { return "MatDLiveChucKState"; }
+
+template <typename OptionalDouble>
+double sanitiseBpm (const OptionalDouble& bpm)
+{
+    if (bpm.hasValue() && std::isfinite (*bpm) && *bpm > 0.0)
+        return juce::jlimit (20.0, 999.0, *bpm);
+
+    return 120.0;
+}
 }
 
 MatDChucKAudioProcessor::MatDChucKAudioProcessor()
@@ -92,6 +103,22 @@ bool MatDChucKAudioProcessor::isMidiEffect() const
 #endif
 }
 
+MatDChucKAudioProcessor::HostTransportState MatDChucKAudioProcessor::readHostTransportState() const
+{
+    HostTransportState state;
+
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto position = playHead->getPosition())
+        {
+            state.isPlaying = position->getIsPlaying();
+            state.bpm = sanitiseBpm (position->getBpm());
+        }
+    }
+
+    return state;
+}
+
 void MatDChucKAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -114,7 +141,7 @@ void MatDChucKAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
     auto ok = engine.prepare (sampleRate, blockSize, inputChannels, outputChannels);
 
     if (ok)
-        ok = engine.loadProgram (getProgramText());
+        ok = engine.loadProgram (getProgramText(), getHostParameterBindings());
 
     const juce::ScopedLock lock (stateLock);
     statusText = ok ? "Audio engine ready" : ("Audio engine error: " + engine.getLastError());
@@ -150,15 +177,31 @@ bool MatDChucKAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts
 void MatDChucKAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
+    const auto transport = readHostTransportState();
 
 #if MATD_CHUCK_MIDI_FX
     buffer.clear();
     if (prepared.load (std::memory_order_acquire))
-        processMidiProgram (midiMessages, buffer.getNumSamples());
+    {
+        if (transport.isPlaying)
+            processMidiProgram (midiMessages, buffer.getNumSamples());
+        else
+            stopActiveMidiNotes (midiMessages);
+
+        wasTransportPlaying = transport.isPlaying;
+    }
 #else
     midiMessages.clear();
 
     if (! prepared.load (std::memory_order_acquire))
+    {
+        buffer.clear();
+        return;
+    }
+
+    updateHostGlobals (transport);
+
+    if (! transport.isPlaying)
     {
         buffer.clear();
         return;
@@ -223,7 +266,7 @@ bool MatDChucKAudioProcessor::applyProgramFromEditor (const juce::String& newPro
         return true;
     }
 
-    const auto queued = engine.loadProgramAsync (newProgram);
+    const auto queued = engine.loadProgramAsync (newProgram, getHostParameterBindings());
     const juce::ScopedLock lock (stateLock);
     statusText = queued ? "ChucK program queued" : ("ChucK error: " + engine.getLastError());
     return queued;
@@ -243,6 +286,23 @@ juce::String MatDChucKAudioProcessor::getBuiltInProgram()
     return audioDefaultProgram();
 #endif
 }
+
+#if ! MATD_CHUCK_MIDI_FX
+std::vector<EmbeddedChucKEngine::ParameterBinding> MatDChucKAudioProcessor::getHostParameterBindings()
+{
+    return
+    {
+        { "hostTempo", 120.0f, 20.0f, 999.0f },
+        { "hostTransportPlaying", 0.0f, 0.0f, 1.0f }
+    };
+}
+
+void MatDChucKAudioProcessor::updateHostGlobals (const HostTransportState& transport)
+{
+    static_cast<void> (engine.setParameterValue ("hostTempo", static_cast<float> (transport.bpm)));
+    static_cast<void> (engine.setParameterValue ("hostTransportPlaying", transport.isPlaying ? 1.0f : 0.0f));
+}
+#endif
 
 #if MATD_CHUCK_MIDI_FX
 bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce::String& error)
@@ -276,6 +336,7 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
     const juce::ScopedLock lock (stateLock);
     midiPatterns = std::move (parsed);
     pendingNoteOffs.clear();
+    wasTransportPlaying = false;
     return true;
 }
 
@@ -310,6 +371,22 @@ void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages
             pattern.nextOnSample += pattern.periodSamples;
         }
     }
+}
+
+void MatDChucKAudioProcessor::stopActiveMidiNotes (juce::MidiBuffer& midiMessages)
+{
+    const juce::ScopedLock lock (stateLock);
+
+    if (! wasTransportPlaying && pendingNoteOffs.empty())
+        return;
+
+    for (const auto& noteOff : pendingNoteOffs)
+        midiMessages.addEvent (juce::MidiMessage::noteOff (1, noteOff.first), 0);
+
+    pendingNoteOffs.clear();
+
+    for (auto& pattern : midiPatterns)
+        pattern.nextOnSample = 0;
 }
 #endif
 

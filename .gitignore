@@ -2,6 +2,7 @@
 
 # Local build products
 build/
+build-*/
 cmake-build-*/
 out/
 

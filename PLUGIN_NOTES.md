@@ -28,6 +28,27 @@ auval -v aumi LcMF MtDs
 
 The audio plugin compiles ChucK code through the embedded engine. The MIDI FX plugin is currently a lightweight MIDI pattern processor because the vendored Weld ChucK engine is built with ChucK MIDI disabled. Its editor accepts one command per line:
 
+The audio plugin advances ChucK only while the host transport is playing. It injects these globals into every ChucK program:
+
+```chuck
+hostTempo              // current host tempo in BPM
+hostTransportPlaying   // 1.0 while the transport is playing, 0.0 while stopped
+```
+
+Example:
+
+```chuck
+SinOsc osc => dac;
+
+while (true)
+{
+    hostTempo * 2.0 => osc.freq;
+    10::ms => now;
+}
+```
+
+The MIDI FX plugin also follows the host transport and stops pending notes when playback stops.
+
 ```text
 note <pitch> <velocity> <lengthMs> <periodMs>
 ```

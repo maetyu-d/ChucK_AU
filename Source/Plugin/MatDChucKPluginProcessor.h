@@ -45,6 +45,14 @@ public:
     static juce::String getBuiltInProgram();
 
 private:
+    struct HostTransportState
+    {
+        bool isPlaying = false;
+        double bpm = 120.0;
+    };
+
+    HostTransportState readHostTransportState() const;
+
 #if MATD_CHUCK_MIDI_FX
     struct MidiPattern
     {
@@ -58,11 +66,16 @@ private:
 
     bool compileMidiProgram (const juce::String& text, juce::String& error);
     void processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples);
+    void stopActiveMidiNotes (juce::MidiBuffer& midiMessages);
 
     std::vector<MidiPattern> midiPatterns;
     std::vector<std::pair<int, int>> pendingNoteOffs;
     double preparedSampleRate = 44100.0;
+    bool wasTransportPlaying = false;
 #else
+    static std::vector<EmbeddedChucKEngine::ParameterBinding> getHostParameterBindings();
+    void updateHostGlobals (const HostTransportState& transport);
+
     EmbeddedChucKEngine engine;
 #endif
 
