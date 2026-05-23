@@ -22,6 +22,7 @@ The build copies the AU bundles into:
 The editor has:
 
 - `Apply`: compile/run the current editor text.
+- `Examples`: load a built-in starter or arpeggio into the editor without applying it.
 - `Load`: load a plain text code example into the editor without applying it.
 - `Save`: save the current editor text as a reusable code example.
 - `Reset`: restore the built-in starter program.
@@ -54,7 +55,14 @@ while (true)
 }
 ```
 
-The MIDI FX plugin also follows the host transport and stops pending notes when playback stops.
+The MIDI FX plugin also follows the host transport and stops pending notes when playback stops. It accepts one command per line:
+
+```text
+note <pitch> <velocity> <lengthMs> <periodMs>
+arp <comma-separated-pitches> <velocity> <lengthBeats> <stepBeats>
+```
+
+`note` is a fixed millisecond note repeater. `arp` steps through pitches and follows the host tempo.
 
 Arpeggio examples are included here:
 
@@ -65,15 +73,10 @@ Examples/midi-fx-arpeggio.txt
 
 Paste `audio-arpeggio.ck` into `Live ChucK`. It uses `hostTempo` to calculate sixteenth-note timing.
 
-Paste `midi-fx-arpeggio.txt` into `Live ChucK MIDI FX`. Its current mini-language uses fixed millisecond note periods.
-
-```text
-note <pitch> <velocity> <lengthMs> <periodMs>
-```
+Paste `midi-fx-arpeggio.txt` into `Live ChucK MIDI FX`, or choose the built-in `C Minor MIDI Arp` example from the Examples menu.
 
 Example:
 
 ```text
-note 60 96 120 500
-note 67 72 90 1000
+arp 48,51,55,58,60,58,55,51 96 0.25 0.25
 ```

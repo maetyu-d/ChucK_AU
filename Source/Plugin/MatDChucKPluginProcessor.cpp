@@ -23,6 +23,34 @@ while (true)
 }
 )chuck";
 }
+
+juce::String audioArpeggioProgram()
+{
+    return R"chuck(
+TriOsc osc => ADSR env => Gain master => dac;
+
+0.16 => master.gain;
+env.set (6::ms, 35::ms, 0.35, 80::ms);
+
+[0, 4, 7, 12, 7, 4] @=> int intervals[];
+48 => int root;
+0 => int step;
+
+while (true)
+{
+    Std.mtof (root + intervals[step]) => osc.freq;
+    env.keyOn();
+
+    (60000.0 / Math.max(20.0, hostTempo) / 4.0)::ms => dur sixteenth;
+    sixteenth * 0.55 => now;
+
+    env.keyOff();
+    sixteenth * 0.45 => now;
+
+    (step + 1) % intervals.size() => step;
+}
+)chuck";
+}
 #endif
 
 #if MATD_CHUCK_MIDI_FX
@@ -31,9 +59,21 @@ juce::String midiDefaultProgram()
     return R"midi(# Live ChucK MIDI FX
 # Commands:
 # note <pitch> <velocity> <lengthMs> <periodMs>
+# arp <comma-separated-pitches> <velocity> <lengthBeats> <stepBeats>
 
-note 60 96 120 500
-note 67 72 90 1000
+arp 48,51,55,58,60,58,55,51 96 0.25 0.25
+)midi";
+}
+
+juce::String midiArpeggioProgram()
+{
+    return R"midi(# Live ChucK MIDI FX arpeggio
+# Commands:
+# arp <comma-separated-pitches> <velocity> <lengthBeats> <stepBeats>
+#
+# This follows Logic's tempo and emits one note per sixteenth note.
+
+arp 48,51,55,58,60,58,55,51 96 0.25 0.25
 )midi";
 }
 #endif
@@ -48,6 +88,14 @@ double sanitiseBpm (const OptionalDouble& bpm)
 
     return 120.0;
 }
+
+#if MATD_CHUCK_MIDI_FX
+int beatsToSamples (double sampleRate, double bpm, double beats)
+{
+    const auto seconds = (60.0 / juce::jmax (20.0, bpm)) * juce::jmax (0.001, beats);
+    return juce::jmax (1, juce::roundToInt (sampleRate * seconds));
+}
+#endif
 }
 
 MatDChucKAudioProcessor::MatDChucKAudioProcessor()
@@ -186,7 +234,7 @@ void MatDChucKAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     if (prepared.load (std::memory_order_acquire))
     {
         if (transport.isPlaying)
-            processMidiProgram (midiMessages, buffer.getNumSamples());
+            processMidiProgram (midiMessages, buffer.getNumSamples(), transport.bpm);
         else
             stopActiveMidiNotes (midiMessages);
 
@@ -289,6 +337,30 @@ juce::String MatDChucKAudioProcessor::getBuiltInProgram()
 #endif
 }
 
+juce::StringArray MatDChucKAudioProcessor::getBuiltInExampleNames()
+{
+#if MATD_CHUCK_MIDI_FX
+    return { "Starter MIDI Arp", "C Minor MIDI Arp" };
+#else
+    return { "Starter Tone", "Tempo Audio Arp" };
+#endif
+}
+
+juce::String MatDChucKAudioProcessor::getBuiltInExample (const juce::String& name)
+{
+#if MATD_CHUCK_MIDI_FX
+    if (name == "C Minor MIDI Arp")
+        return midiArpeggioProgram();
+
+    return midiDefaultProgram();
+#else
+    if (name == "Tempo Audio Arp")
+        return audioArpeggioProgram();
+
+    return audioDefaultProgram();
+#endif
+}
+
 #if ! MATD_CHUCK_MIDI_FX
 std::vector<EmbeddedChucKEngine::ParameterBinding> MatDChucKAudioProcessor::getHostParameterBindings()
 {
@@ -318,21 +390,45 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
         if (line.isEmpty())
             continue;
 
-        const auto tokens = juce::StringArray::fromTokens (line, " \t,", {});
-        if (tokens.size() != 5 || tokens[0] != "note")
+        const auto tokens = juce::StringArray::fromTokens (line, " \t", {});
+        if (tokens.size() == 5 && tokens[0] == "note")
         {
-            error = "Expected: note <pitch> <velocity> <lengthMs> <periodMs>";
-            return false;
+            MidiPattern pattern;
+            pattern.notes = { juce::jlimit (0, 127, tokens[1].getIntValue()) };
+            pattern.velocity = juce::jlimit (1, 127, tokens[2].getIntValue());
+            const auto lengthMs = juce::jlimit (1, 60000, tokens[3].getIntValue());
+            const auto periodMs = juce::jlimit (1, 60000, tokens[4].getIntValue());
+            pattern.lengthSamples = juce::jmax (1, juce::roundToInt (preparedSampleRate * static_cast<double> (lengthMs) / 1000.0));
+            pattern.periodSamples = juce::jmax (1, juce::roundToInt (preparedSampleRate * static_cast<double> (periodMs) / 1000.0));
+            parsed.push_back (std::move (pattern));
+            continue;
         }
 
-        MidiPattern pattern;
-        pattern.note = juce::jlimit (0, 127, tokens[1].getIntValue());
-        pattern.velocity = juce::jlimit (1, 127, tokens[2].getIntValue());
-        const auto lengthMs = juce::jlimit (1, 60000, tokens[3].getIntValue());
-        const auto periodMs = juce::jlimit (1, 60000, tokens[4].getIntValue());
-        pattern.lengthSamples = juce::jmax (1, juce::roundToInt (preparedSampleRate * static_cast<double> (lengthMs) / 1000.0));
-        pattern.periodSamples = juce::jmax (1, juce::roundToInt (preparedSampleRate * static_cast<double> (periodMs) / 1000.0));
-        parsed.push_back (pattern);
+        if (tokens.size() == 5 && tokens[0] == "arp")
+        {
+            MidiPattern pattern;
+            pattern.notes.clear();
+            const auto pitchTokens = juce::StringArray::fromTokens (tokens[1], ",", {});
+
+            for (const auto& pitch : pitchTokens)
+                pattern.notes.push_back (juce::jlimit (0, 127, pitch.getIntValue()));
+
+            if (pattern.notes.empty())
+            {
+                error = "Arp needs at least one pitch";
+                return false;
+            }
+
+            pattern.velocity = juce::jlimit (1, 127, tokens[2].getIntValue());
+            pattern.lengthBeats = juce::jlimit (0.01, 16.0, tokens[3].getDoubleValue());
+            pattern.periodBeats = juce::jlimit (0.01, 16.0, tokens[4].getDoubleValue());
+            pattern.tempoSync = true;
+            parsed.push_back (std::move (pattern));
+            continue;
+        }
+
+        error = "Expected: note <pitch> <velocity> <lengthMs> <periodMs> or arp <pitches> <velocity> <lengthBeats> <stepBeats>";
+        return false;
     }
 
     const juce::ScopedLock lock (stateLock);
@@ -342,7 +438,7 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
     return true;
 }
 
-void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples)
+void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples, double bpm)
 {
     const juce::ScopedLock lock (stateLock);
 
@@ -363,14 +459,21 @@ void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages
         if (! pattern.enabled)
             continue;
 
+        const auto lengthSamples = pattern.tempoSync ? beatsToSamples (preparedSampleRate, bpm, pattern.lengthBeats)
+                                                     : pattern.lengthSamples;
+        const auto periodSamples = pattern.tempoSync ? beatsToSamples (preparedSampleRate, bpm, pattern.periodBeats)
+                                                     : pattern.periodSamples;
+
         pattern.nextOnSample -= numSamples;
         while (pattern.nextOnSample <= 0)
         {
+            const auto note = pattern.notes[static_cast<size_t> (pattern.currentStep % static_cast<int> (pattern.notes.size()))];
             const auto samplePosition = juce::jlimit (0, juce::jmax (0, numSamples - 1), numSamples + pattern.nextOnSample);
-            midiMessages.addEvent (juce::MidiMessage::noteOn (1, pattern.note, static_cast<juce::uint8> (pattern.velocity)),
+            midiMessages.addEvent (juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (pattern.velocity)),
                                    samplePosition);
-            pendingNoteOffs.push_back ({ pattern.note, pattern.lengthSamples });
-            pattern.nextOnSample += pattern.periodSamples;
+            pendingNoteOffs.push_back ({ note, lengthSamples });
+            pattern.nextOnSample += periodSamples;
+            pattern.currentStep = (pattern.currentStep + 1) % static_cast<int> (pattern.notes.size());
         }
     }
 }
@@ -388,7 +491,10 @@ void MatDChucKAudioProcessor::stopActiveMidiNotes (juce::MidiBuffer& midiMessage
     pendingNoteOffs.clear();
 
     for (auto& pattern : midiPatterns)
+    {
         pattern.nextOnSample = 0;
+        pattern.currentStep = 0;
+    }
 }
 #endif
 

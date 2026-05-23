@@ -8,6 +8,7 @@
 #include <cmath>
 #include <exception>
 #include <chrono>
+#include <mutex>
 #include <utility>
 
 namespace
@@ -44,6 +45,12 @@ struct CandidateProgram
     std::array<double*, EmbeddedChucKEngine::maximumParameterCount> parameterPointers {};
 };
 
+std::mutex& getChucKLifecycleMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
 juce::String buildCompleteProgram (const juce::String& programBody,
                                    const std::vector<EmbeddedChucKEngine::ParameterBinding>& bindings)
 {
@@ -60,6 +67,8 @@ void destroyChucKInstance (std::unique_ptr<ChucK> instance) noexcept
 {
     if (instance == nullptr)
         return;
+
+    const std::lock_guard<std::mutex> lifecycleLock (getChucKLifecycleMutex());
 
     try
     {
@@ -87,6 +96,8 @@ bool initialiseCandidate (CandidateProgram& candidate,
                           const std::vector<EmbeddedChucKEngine::ParameterBinding>& bindings,
                           juce::String& error)
 {
+    const std::lock_guard<std::mutex> lifecycleLock (getChucKLifecycleMutex());
+
     candidate.chuck.reset();
     candidate.parameterPointers.fill (nullptr);
     candidate.chuck = std::make_unique<ChucK>();

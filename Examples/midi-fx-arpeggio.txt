@@ -1,15 +1,7 @@
 # Live ChucK MIDI FX arpeggio
 # Commands:
-# note <pitch> <velocity> <lengthMs> <periodMs>
+# arp <comma-separated-pitches> <velocity> <lengthBeats> <stepBeats>
 #
-# This plays a C minor 7 arpeggio. Periods are fixed in ms in the current
-# MIDI FX mini-language; use shorter periods for faster arpeggios.
+# This follows Logic's tempo and emits one note per sixteenth note.
 
-note 48 96 90 500
-note 51 88 90 500
-note 55 92 90 500
-note 58 84 90 500
-note 60 96 90 500
-note 58 84 90 500
-note 55 92 90 500
-note 51 88 90 500
+arp 48,51,55,58,60,58,55,51 96 0.25 0.25

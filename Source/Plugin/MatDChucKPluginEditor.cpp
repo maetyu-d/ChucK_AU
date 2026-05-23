@@ -39,6 +39,16 @@ MatDChucKPluginEditor::MatDChucKPluginEditor (MatDChucKAudioProcessor& owner)
     addAndMakeVisible (saveButton);
     addAndMakeVisible (resetButton);
 
+    exampleBox.addListener (this);
+    exampleBox.setTextWhenNothingSelected ("Examples");
+    exampleBox.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff30343b));
+    exampleBox.setColour (juce::ComboBox::textColourId, textColour());
+    exampleBox.setColour (juce::ComboBox::arrowColourId, accentColour());
+    const auto examples = MatDChucKAudioProcessor::getBuiltInExampleNames();
+    for (int i = 0; i < examples.size(); ++i)
+        exampleBox.addItem (examples[i], i + 1);
+    addAndMakeVisible (exampleBox);
+
     editor.setFont (juce::FontOptions (15.0f));
     editor.setTabSize (4, true);
     editor.setColour (juce::CodeEditorComponent::backgroundColourId, panelColour());
@@ -62,6 +72,7 @@ MatDChucKPluginEditor::~MatDChucKPluginEditor()
     loadButton.removeListener (this);
     saveButton.removeListener (this);
     resetButton.removeListener (this);
+    exampleBox.removeListener (this);
 }
 
 void MatDChucKPluginEditor::paint (juce::Graphics& g)
@@ -76,14 +87,16 @@ void MatDChucKPluginEditor::resized()
     auto bounds = getLocalBounds().reduced (18);
     auto header = bounds.removeFromTop (38);
 
-    titleLabel.setBounds (header.removeFromLeft (360));
-    resetButton.setBounds (header.removeFromRight (92).reduced (0, 2));
+    titleLabel.setBounds (header.removeFromLeft (220));
+    exampleBox.setBounds (header.removeFromLeft (150).reduced (0, 2));
+    header.removeFromLeft (8);
+    resetButton.setBounds (header.removeFromRight (76).reduced (0, 2));
     header.removeFromRight (8);
-    saveButton.setBounds (header.removeFromRight (92).reduced (0, 2));
+    saveButton.setBounds (header.removeFromRight (76).reduced (0, 2));
     header.removeFromRight (8);
-    loadButton.setBounds (header.removeFromRight (92).reduced (0, 2));
+    loadButton.setBounds (header.removeFromRight (76).reduced (0, 2));
     header.removeFromRight (8);
-    applyButton.setBounds (header.removeFromRight (100).reduced (0, 2));
+    applyButton.setBounds (header.removeFromRight (82).reduced (0, 2));
 
     bounds.removeFromTop (10);
     statusLabel.setBounds (bounds.removeFromBottom (28));
@@ -112,6 +125,18 @@ void MatDChucKPluginEditor::buttonClicked (juce::Button* button)
     {
         saveCodeToFile();
     }
+}
+
+void MatDChucKPluginEditor::comboBoxChanged (juce::ComboBox* comboBox)
+{
+    if (comboBox != &exampleBox || exampleBox.getSelectedId() <= 0)
+        return;
+
+    const auto exampleName = exampleBox.getText();
+    codeDocument.replaceAllContent (MatDChucKAudioProcessor::getBuiltInExample (exampleName));
+    statusLabel.setText ("Loaded " + exampleName + " - press Apply to run it",
+                         juce::dontSendNotification);
+    exampleBox.setSelectedId (0, juce::dontSendNotification);
 }
 
 void MatDChucKPluginEditor::timerCallback()

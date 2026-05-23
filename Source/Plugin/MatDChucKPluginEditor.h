@@ -4,6 +4,7 @@
 
 class MatDChucKPluginEditor final : public juce::AudioProcessorEditor,
                                     private juce::Button::Listener,
+                                    private juce::ComboBox::Listener,
                                     private juce::Timer
 {
 public:
@@ -15,6 +16,7 @@ public:
 
 private:
     void buttonClicked (juce::Button*) override;
+    void comboBoxChanged (juce::ComboBox*) override;
     void timerCallback() override;
     void refreshStatus();
     void loadCodeFromFile();
@@ -31,6 +33,7 @@ private:
     juce::TextButton loadButton { "Load" };
     juce::TextButton saveButton { "Save" };
     juce::TextButton resetButton { "Reset" };
+    juce::ComboBox exampleBox;
     juce::Label titleLabel;
     juce::Label statusLabel;
     std::unique_ptr<juce::FileChooser> fileChooser;

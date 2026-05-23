@@ -43,6 +43,8 @@ public:
     bool applyProgramFromEditor (const juce::String& newProgram);
     void resetToDefaultProgram();
     static juce::String getBuiltInProgram();
+    static juce::StringArray getBuiltInExampleNames();
+    static juce::String getBuiltInExample (const juce::String& name);
 
 private:
     struct HostTransportState
@@ -56,16 +58,20 @@ private:
 #if MATD_CHUCK_MIDI_FX
     struct MidiPattern
     {
-        int note = 60;
+        std::vector<int> notes { 60 };
+        int currentStep = 0;
         int velocity = 96;
         int lengthSamples = 4800;
         int periodSamples = 24000;
+        double lengthBeats = 0.25;
+        double periodBeats = 0.25;
         int nextOnSample = 0;
+        bool tempoSync = false;
         bool enabled = true;
     };
 
     bool compileMidiProgram (const juce::String& text, juce::String& error);
-    void processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples);
+    void processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples, double bpm);
     void stopActiveMidiNotes (juce::MidiBuffer& midiMessages);
 
     std::vector<MidiPattern> midiPatterns;
