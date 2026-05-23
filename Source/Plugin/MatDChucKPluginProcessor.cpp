@@ -50,6 +50,43 @@ while (true)
 }
 )chuck";
 }
+
+juce::String audioBeatGateProgram()
+{
+    return R"chuck(
+SawOsc osc => LPF filter => Gain gate => dac;
+
+0.35 => filter.Q;
+
+while (true)
+{
+    80.0 + hostParam1 * 640.0 => osc.freq;
+    300.0 + hostParam2 * 3600.0 => filter.freq;
+    if (hostBeat % 1.0 < 0.5) hostParamGain => gate.gain;
+    else 0.0 => gate.gain;
+    8::ms => now;
+}
+)chuck";
+}
+
+juce::String audioAutomationProgram()
+{
+    return R"chuck(
+SinOsc carrier => Gain out => dac;
+SinOsc vibrato => blackhole;
+
+5.0 => vibrato.freq;
+
+while (true)
+{
+    110.0 + hostParam1 * 880.0 => float base;
+    0.0 + hostParam2 * 14.0 => float depth;
+    base + vibrato.last() * depth => carrier.freq;
+    hostParamGain * (0.4 + hostParam3 * 0.6) => out.gain;
+    1::samp => now;
+}
+)chuck";
+}
 #endif
 
 #if MATD_CHUCK_MIDI_FX
@@ -73,6 +110,13 @@ juce::String midiArpeggioProgram()
 # This follows Logic's tempo and emits one note per sixteenth note.
 
 arp 48,51,55,58,60,58,55,51 96 0.25 0.25
+)midi";
+}
+
+juce::String midiOctaveArpProgram()
+{
+    return R"midi(# Higher octave tempo arpeggio
+arp 60,64,67,72,76,72,67,64 104 0.125 0.125
 )midi";
 }
 #endif
@@ -261,6 +305,10 @@ void MatDChucKAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
     const auto inputChannels = juce::jmax (1, getTotalNumInputChannels());
     const auto outputChannels = juce::jlimit (1, 2, getTotalNumOutputChannels());
     const auto blockSize = juce::jmax (1, samplesPerBlock);
+    lastPreparedSampleRate = sampleRate;
+    lastPreparedBlockSize = blockSize;
+    lastPreparedInputChannels = inputChannels;
+    lastPreparedOutputChannels = outputChannels;
     const auto ok = engine.prepare (sampleRate,
                                     blockSize,
                                     inputChannels,
@@ -306,6 +354,9 @@ void MatDChucKAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
 #if MATD_CHUCK_MIDI_FX
     buffer.clear();
+    if (midiPanicRequested.exchange (false, std::memory_order_acq_rel))
+        addAllNotesOff (midiMessages);
+
     if (prepared.load (std::memory_order_acquire))
     {
         if (transport.isPlaying)
@@ -355,8 +406,8 @@ void MatDChucKAudioProcessor::setStateInformation (const void* data, int sizeInB
     if (state == nullptr || ! state->hasTagName (stateTag()))
         return;
 
-    applyProgramFromEditor (state->getStringAttribute ("program", getBuiltInProgram()));
     restoreHostParameters (*state);
+    applyProgramFromEditor (state->getStringAttribute ("program", getBuiltInProgram()));
 }
 
 juce::String MatDChucKAudioProcessor::getProgramText() const
@@ -405,6 +456,99 @@ void MatDChucKAudioProcessor::resetToDefaultProgram()
     applyProgramFromEditor (getBuiltInProgram());
 }
 
+void MatDChucKAudioProcessor::stopCode()
+{
+#if MATD_CHUCK_MIDI_FX
+    const juce::ScopedLock lock (stateLock);
+    midiPatterns.clear();
+    pendingNoteOffs.clear();
+    prepared.store (false, std::memory_order_release);
+    midiPanicRequested.store (true, std::memory_order_release);
+    statusText = "Stopped";
+#else
+    prepared.store (false, std::memory_order_release);
+    engine.release();
+    const juce::ScopedLock lock (stateLock);
+    statusText = "Stopped";
+#endif
+}
+
+bool MatDChucKAudioProcessor::restartCode()
+{
+#if MATD_CHUCK_MIDI_FX
+    juce::String error;
+    const auto ok = compileMidiProgram (getProgramText(), error);
+    const juce::ScopedLock lock (stateLock);
+    prepared.store (ok, std::memory_order_release);
+    statusText = ok ? "Restarted" : ("MIDI program error: " + error);
+    return ok;
+#else
+    prepared.store (false, std::memory_order_release);
+    engine.release();
+
+    const auto ok = engine.prepare (lastPreparedSampleRate,
+                                    lastPreparedBlockSize,
+                                    lastPreparedInputChannels,
+                                    lastPreparedOutputChannels,
+                                    getProgramText(),
+                                    getHostParameterBindings());
+
+    const juce::ScopedLock lock (stateLock);
+    prepared.store (ok, std::memory_order_release);
+    statusText = ok ? "Restarted" : engine.getLastError();
+    return ok;
+#endif
+}
+
+void MatDChucKAudioProcessor::panic()
+{
+#if MATD_CHUCK_MIDI_FX
+    const juce::ScopedLock lock (stateLock);
+    pendingNoteOffs.clear();
+    for (auto& pattern : midiPatterns)
+    {
+        pattern.nextOnSample = 0;
+        pattern.currentStep = 0;
+    }
+    midiPanicRequested.store (true, std::memory_order_release);
+    statusText = "Panic sent";
+#else
+    static_cast<void> (restartCode());
+#endif
+}
+
+float MatDChucKAudioProcessor::getHostParameterValue (int index) const noexcept
+{
+    switch (index)
+    {
+        case 0: return getParameterValueOrDefault (gainParameter, 0.14f);
+        case 1: return getParameterValueOrDefault (control1Parameter, 0.0f);
+        case 2: return getParameterValueOrDefault (control2Parameter, 0.0f);
+        case 3: return getParameterValueOrDefault (control3Parameter, 0.0f);
+        default: return 0.0f;
+    }
+}
+
+void MatDChucKAudioProcessor::setHostParameterValue (int index, float value)
+{
+    juce::AudioParameterFloat* parameter = nullptr;
+
+    switch (index)
+    {
+        case 0: parameter = gainParameter; break;
+        case 1: parameter = control1Parameter; break;
+        case 2: parameter = control2Parameter; break;
+        case 3: parameter = control3Parameter; break;
+        default: break;
+    }
+
+    if (parameter == nullptr)
+        return;
+
+    const auto normalised = parameter->getNormalisableRange().convertTo0to1 (juce::jlimit (0.0f, 1.0f, value));
+    parameter->setValueNotifyingHost (normalised);
+}
+
 juce::String MatDChucKAudioProcessor::getBuiltInProgram()
 {
 #if MATD_CHUCK_MIDI_FX
@@ -417,9 +561,9 @@ juce::String MatDChucKAudioProcessor::getBuiltInProgram()
 juce::StringArray MatDChucKAudioProcessor::getBuiltInExampleNames()
 {
 #if MATD_CHUCK_MIDI_FX
-    return { "Starter MIDI Arp", "C Minor MIDI Arp" };
+    return { "Starter MIDI Arp", "C Minor MIDI Arp", "Fast Octave MIDI Arp" };
 #else
-    return { "Starter Tone", "Tempo Audio Arp" };
+    return { "Starter Tone", "Tempo Audio Arp", "Beat Gate", "Automation Demo" };
 #endif
 }
 
@@ -428,11 +572,17 @@ juce::String MatDChucKAudioProcessor::getBuiltInExample (const juce::String& nam
 #if MATD_CHUCK_MIDI_FX
     if (name == "C Minor MIDI Arp")
         return midiArpeggioProgram();
+    if (name == "Fast Octave MIDI Arp")
+        return midiOctaveArpProgram();
 
     return midiDefaultProgram();
 #else
     if (name == "Tempo Audio Arp")
         return audioArpeggioProgram();
+    if (name == "Beat Gate")
+        return audioBeatGateProgram();
+    if (name == "Automation Demo")
+        return audioAutomationProgram();
 
     return audioDefaultProgram();
 #endif
@@ -596,6 +746,12 @@ void MatDChucKAudioProcessor::stopActiveMidiNotes (juce::MidiBuffer& midiMessage
         pattern.nextOnSample = 0;
         pattern.currentStep = 0;
     }
+}
+
+void MatDChucKAudioProcessor::addAllNotesOff (juce::MidiBuffer& midiMessages)
+{
+    for (int channel = 1; channel <= 16; ++channel)
+        midiMessages.addEvent (juce::MidiMessage::allNotesOff (channel), 0);
 }
 #endif
 

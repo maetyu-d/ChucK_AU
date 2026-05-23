@@ -27,6 +27,8 @@ The editor has:
 - `Load`: load a plain text code example into the editor without applying it.
 - `Save`: save the current editor text as a reusable code example.
 - `Reset`: restore the built-in starter program.
+- `Stop`, `Restart`, `Panic`: stop code, restart the current code, or reset audio/MIDI output.
+- `Gain`, `Ctrl 1`, `Ctrl 2`, `Ctrl 3`: automatable sliders that map to ChucK globals.
 
 Validate them with:
 
@@ -81,6 +83,8 @@ Arpeggio examples are included here:
 
 ```text
 Examples/audio-arpeggio.ck
+Examples/beat-gate.ck
+Examples/automation-demo.ck
 Examples/midi-fx-arpeggio.txt
 ```
 

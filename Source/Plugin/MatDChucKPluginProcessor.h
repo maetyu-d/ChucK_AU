@@ -42,6 +42,11 @@ public:
     juce::String getStatusText() const;
     bool applyProgramFromEditor (const juce::String& newProgram);
     void resetToDefaultProgram();
+    void stopCode();
+    bool restartCode();
+    void panic();
+    float getHostParameterValue (int index) const noexcept;
+    void setHostParameterValue (int index, float value);
     static juce::String getBuiltInProgram();
     static juce::StringArray getBuiltInExampleNames();
     static juce::String getBuiltInExample (const juce::String& name);
@@ -85,11 +90,13 @@ private:
     bool compileMidiProgram (const juce::String& text, juce::String& error);
     void processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples, double bpm);
     void stopActiveMidiNotes (juce::MidiBuffer& midiMessages);
+    void addAllNotesOff (juce::MidiBuffer& midiMessages);
 
     std::vector<MidiPattern> midiPatterns;
     std::vector<std::pair<int, int>> pendingNoteOffs;
     double preparedSampleRate = 44100.0;
     bool wasTransportPlaying = false;
+    std::atomic<bool> midiPanicRequested { false };
 #else
     static std::vector<EmbeddedChucKEngine::ParameterBinding> getHostParameterBindings();
     void updateHostGlobals (const HostTransportState& transport);
@@ -105,6 +112,12 @@ private:
     juce::AudioParameterFloat* control2Parameter = nullptr;
     juce::AudioParameterFloat* control3Parameter = nullptr;
     std::atomic<bool> prepared { false };
+#if ! MATD_CHUCK_MIDI_FX
+    double lastPreparedSampleRate = 44100.0;
+    int lastPreparedBlockSize = 512;
+    int lastPreparedInputChannels = 2;
+    int lastPreparedOutputChannels = 2;
+#endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MatDChucKAudioProcessor)
 };
