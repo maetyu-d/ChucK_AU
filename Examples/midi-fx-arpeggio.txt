@@ -1,0 +1,15 @@
+# Live ChucK MIDI FX arpeggio
+# Commands:
+# note <pitch> <velocity> <lengthMs> <periodMs>
+#
+# This plays a C minor 7 arpeggio. Periods are fixed in ms in the current
+# MIDI FX mini-language; use shorter periods for faster arpeggios.
+
+note 48 96 90 500
+note 51 88 90 500
+note 55 92 90 500
+note 58 84 90 500
+note 60 96 90 500
+note 58 84 90 500
+note 55 92 90 500
+note 51 88 90 500

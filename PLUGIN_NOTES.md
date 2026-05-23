@@ -49,6 +49,17 @@ while (true)
 
 The MIDI FX plugin also follows the host transport and stops pending notes when playback stops.
 
+Arpeggio examples are included here:
+
+```text
+Examples/audio-arpeggio.ck
+Examples/midi-fx-arpeggio.txt
+```
+
+Paste `audio-arpeggio.ck` into `Live ChucK`. It uses `hostTempo` to calculate sixteenth-note timing.
+
+Paste `midi-fx-arpeggio.txt` into `Live ChucK MIDI FX`. Its current mini-language uses fixed millisecond note periods.
+
 ```text
 note <pitch> <velocity> <lengthMs> <periodMs>
 ```
