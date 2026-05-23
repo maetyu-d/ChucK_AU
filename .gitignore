@@ -5,6 +5,7 @@ build/
 build-*/
 cmake-build-*/
 out/
+release/
 
 # CMake/user-local files
 CMakeUserPresets.json

@@ -87,6 +87,104 @@ while (true)
 }
 )chuck";
 }
+
+juce::String audioPulseGardenProgram()
+{
+    return R"chuck(
+SawOsc bass => LPF bassFilter => Gain bassGain => Gain master => dac;
+TriOsc chime => ADSR chimeEnv => Gain chimeGain => master;
+Noise hat => BPF hatFilter => ADSR hatEnv => Gain hatGain => master;
+
+0.8 => bassFilter.Q;
+5200.0 => hatFilter.freq;
+7.0 => hatFilter.Q;
+chimeEnv.set (5::ms, 60::ms, 0.18, 160::ms);
+hatEnv.set (1::ms, 18::ms, 0.0, 12::ms);
+
+[0, 3, 7, 10, 12, 10, 7, 3] @=> int tones[];
+0 => int step;
+
+while (true)
+{
+    36.0 + hostParam1 * 24.0 => float root;
+    Std.mtof (root + tones[step]) => bass.freq;
+    Std.mtof (root + 24 + tones[(step * 3) % tones.size()]) => chime.freq;
+    180.0 + hostParam2 * 4200.0 => bassFilter.freq;
+    hostParamGain * 0.75 => master.gain;
+    0.35 + hostParam3 * 0.55 => bassGain.gain;
+    0.18 + hostParam2 * 0.22 => chimeGain.gain;
+    0.11 => hatGain.gain;
+
+    chimeEnv.keyOn();
+    if (step % 2 == 0) hatEnv.keyOn();
+
+    (60000.0 / Math.max(20.0, hostTempo) / 4.0)::ms => dur tick;
+    tick * 0.45 => now;
+
+    chimeEnv.keyOff();
+    hatEnv.keyOff();
+    tick * 0.55 => now;
+
+    (step + 1) % tones.size() => step;
+}
+)chuck";
+}
+
+juce::String audioShimmerPadProgram()
+{
+    return R"chuck(
+SinOsc low => Gain lowGain => Gain master => dac;
+TriOsc mid => Gain midGain => master;
+TriOsc high => Gain highGain => master;
+SinOsc lfo => blackhole;
+
+0.05 => lfo.freq;
+
+while (true)
+{
+    42.0 + hostParam1 * 18.0 => float root;
+    Std.mtof (root) => float base;
+    base => low.freq;
+    base * 1.501 => mid.freq;
+    base * 2.006 + lfo.last() * (2.0 + hostParam2 * 18.0) => high.freq;
+
+    hostParamGain * 0.42 => master.gain;
+    0.55 => lowGain.gain;
+    0.25 + hostParam2 * 0.2 => midGain.gain;
+    0.12 + hostParam3 * 0.28 => highGain.gain;
+    5::ms => now;
+}
+)chuck";
+}
+
+juce::String audioClockworkLeadProgram()
+{
+    return R"chuck(
+SqrOsc lead => ADSR env => LPF filter => Gain master => dac;
+
+env.set (2::ms, 30::ms, 0.28, 65::ms);
+0.45 => filter.Q;
+
+[0, 2, 7, 9, 12, 14, 12, 7, 5, 9, 7, 2] @=> int notes[];
+0 => int step;
+
+while (true)
+{
+    48.0 + hostParam1 * 24.0 => float root;
+    Std.mtof (root + notes[step]) => lead.freq;
+    550.0 + hostParam2 * 5200.0 => filter.freq;
+    hostParamGain * (0.35 + hostParam3 * 0.45) => master.gain;
+
+    env.keyOn();
+    (60000.0 / Math.max(20.0, hostTempo) / 8.0)::ms => dur thirtySecond;
+    thirtySecond * (1.0 + hostParam3 * 3.0) => now;
+    env.keyOff();
+    thirtySecond => now;
+
+    (step + 1) % notes.size() => step;
+}
+)chuck";
+}
 #endif
 
 #if MATD_CHUCK_MIDI_FX
@@ -117,6 +215,23 @@ juce::String midiOctaveArpProgram()
 {
     return R"midi(# Higher octave tempo arpeggio
 arp 60,64,67,72,76,72,67,64 104 0.125 0.125
+)midi";
+}
+
+juce::String midiGlassCascadeProgram()
+{
+    return R"midi(# Glass cascade
+arp 60,64,67,71,76,79,83,88 92 0.125 0.125
+arp 48,55,60,64,67,64,60,55 74 0.5 0.5
+)midi";
+}
+
+juce::String midiPulseStackProgram()
+{
+    return R"midi(# Pulse stack
+arp 36,36,43,48,36,43,50,48 112 0.125 0.25
+arp 72,75,79,82,84,82,79,75 86 0.0625 0.125
+arp 55,58,62,67 68 0.25 0.75
 )midi";
 }
 #endif
@@ -561,9 +676,9 @@ juce::String MatDChucKAudioProcessor::getBuiltInProgram()
 juce::StringArray MatDChucKAudioProcessor::getBuiltInExampleNames()
 {
 #if MATD_CHUCK_MIDI_FX
-    return { "Starter MIDI Arp", "C Minor MIDI Arp", "Fast Octave MIDI Arp" };
+    return { "Starter MIDI Arp", "C Minor MIDI Arp", "Fast Octave MIDI Arp", "Glass Cascade", "Pulse Stack" };
 #else
-    return { "Starter Tone", "Tempo Audio Arp", "Beat Gate", "Automation Demo" };
+    return { "Starter Tone", "Tempo Audio Arp", "Beat Gate", "Automation Demo", "Pulse Garden", "Shimmer Pad", "Clockwork Lead" };
 #endif
 }
 
@@ -574,6 +689,10 @@ juce::String MatDChucKAudioProcessor::getBuiltInExample (const juce::String& nam
         return midiArpeggioProgram();
     if (name == "Fast Octave MIDI Arp")
         return midiOctaveArpProgram();
+    if (name == "Glass Cascade")
+        return midiGlassCascadeProgram();
+    if (name == "Pulse Stack")
+        return midiPulseStackProgram();
 
     return midiDefaultProgram();
 #else
@@ -583,6 +702,12 @@ juce::String MatDChucKAudioProcessor::getBuiltInExample (const juce::String& nam
         return audioBeatGateProgram();
     if (name == "Automation Demo")
         return audioAutomationProgram();
+    if (name == "Pulse Garden")
+        return audioPulseGardenProgram();
+    if (name == "Shimmer Pad")
+        return audioShimmerPadProgram();
+    if (name == "Clockwork Lead")
+        return audioClockworkLeadProgram();
 
     return audioDefaultProgram();
 #endif
