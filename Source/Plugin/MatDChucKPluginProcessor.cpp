@@ -1,6 +1,7 @@
 #include "MatDChucKPluginProcessor.h"
 #include "MatDChucKPluginEditor.h"
 
+#include <cstdint>
 #include <cmath>
 
 namespace
@@ -577,7 +578,7 @@ void MatDChucKAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     if (prepared.load (std::memory_order_acquire))
     {
         if (transport.isPlaying)
-            processMidiProgram (midiMessages, buffer.getNumSamples(), transport.bpm);
+            processMidiProgram (midiMessages, buffer.getNumSamples(), transport);
         else
             stopActiveMidiNotes (midiMessages);
 
@@ -727,6 +728,7 @@ void MatDChucKAudioProcessor::panic()
     {
         pattern.nextOnSample = 0;
         pattern.currentStep = 0;
+        pattern.lastEventIndex = -1;
     }
     midiSequenceBeatPosition = 0.0;
     midiPanicRequested.store (true, std::memory_order_release);
@@ -953,15 +955,18 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
     return true;
 }
 
-void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples, double bpm)
+void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages,
+                                                  int numSamples,
+                                                  const HostTransportState& transport)
 {
     const juce::ScopedTryLock lock (stateLock);
     if (! lock.isLocked())
         return;
 
-    const auto cycleBeat = midiSequenceCycleBeats > 0.0
-                               ? std::fmod (midiSequenceBeatPosition, midiSequenceCycleBeats)
-                               : midiSequenceBeatPosition;
+    const auto bpm = juce::jmax (20.0, transport.bpm);
+    const auto blockBeats = (static_cast<double> (numSamples) / juce::jmax (1.0, preparedSampleRate)) * (bpm / 60.0);
+    const auto blockStartBeat = std::isfinite (transport.ppqPosition) ? transport.ppqPosition : midiSequenceBeatPosition;
+    const auto blockEndBeat = blockStartBeat + blockBeats;
     auto eventsAdded = 0;
 
     for (auto it = pendingNoteOffs.begin(); it != pendingNoteOffs.end();)
@@ -982,40 +987,62 @@ void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages
         if (! pattern.enabled)
             continue;
 
-        if (pattern.variationLengthBeats > 0.0
-            && (cycleBeat < pattern.variationStartBeats
-                || cycleBeat >= pattern.variationStartBeats + pattern.variationLengthBeats))
-        {
-            pattern.nextOnSample = 0;
-            pattern.currentStep = 0;
-            continue;
-        }
-
         const auto lengthSamples = pattern.tempoSync ? beatsToSamples (preparedSampleRate, bpm, pattern.lengthBeats)
                                                      : pattern.lengthSamples;
-        const auto periodSamples = pattern.tempoSync ? beatsToSamples (preparedSampleRate, bpm, pattern.periodBeats)
-                                                     : pattern.periodSamples;
+        const auto periodBeats = pattern.tempoSync
+                                    ? juce::jmax (0.01, pattern.periodBeats)
+                                    : juce::jmax (0.01, static_cast<double> (pattern.periodSamples) / juce::jmax (1.0, preparedSampleRate) * (bpm / 60.0));
 
-        pattern.nextOnSample -= numSamples;
-        while (pattern.nextOnSample <= 0 && eventsAdded < maximumMidiEventsPerBlock)
+        auto firstEventIndex = static_cast<int64_t> (std::floor (blockStartBeat / periodBeats));
+        if (static_cast<double> (firstEventIndex) * periodBeats < blockStartBeat - 0.0000001)
+            ++firstEventIndex;
+
+        if (firstEventIndex < pattern.lastEventIndex)
         {
-            const auto note = pattern.notes[static_cast<size_t> (pattern.currentStep % static_cast<int> (pattern.notes.size()))];
-            const auto samplePosition = juce::jlimit (0, juce::jmax (0, numSamples - 1), numSamples + pattern.nextOnSample);
+            pattern.lastEventIndex = -1;
+            pattern.currentStep = 0;
+        }
+
+        for (auto eventIndex = firstEventIndex; eventsAdded < maximumMidiEventsPerBlock; ++eventIndex)
+        {
+            if (eventIndex <= pattern.lastEventIndex)
+                continue;
+
+            const auto eventBeat = static_cast<double> (eventIndex) * periodBeats;
+            if (eventBeat >= blockEndBeat)
+                break;
+
+            auto stepIndex = eventIndex;
+            if (pattern.variationLengthBeats > 0.0)
+            {
+                const auto cycleLength = juce::jmax (0.01, midiSequenceCycleBeats);
+                auto cycleBeat = std::fmod (eventBeat, cycleLength);
+                if (cycleBeat < 0.0)
+                    cycleBeat += cycleLength;
+
+                if (cycleBeat < pattern.variationStartBeats
+                    || cycleBeat >= pattern.variationStartBeats + pattern.variationLengthBeats)
+                    continue;
+
+                stepIndex = static_cast<int64_t> (std::floor ((cycleBeat - pattern.variationStartBeats) / periodBeats));
+            }
+
+            const auto note = pattern.notes[static_cast<size_t> (stepIndex % static_cast<int64_t> (pattern.notes.size()))];
+            const auto samplePosition = juce::jlimit (0,
+                                                      juce::jmax (0, numSamples - 1),
+                                                      static_cast<int> (std::round (((eventBeat - blockStartBeat) / juce::jmax (0.0000001, blockBeats))
+                                                                                  * static_cast<double> (numSamples))));
             midiMessages.addEvent (juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (pattern.velocity)),
                                    samplePosition);
             ++eventsAdded;
             if (pendingNoteOffs.size() < maximumPendingNoteOffs)
                 pendingNoteOffs.push_back ({ note, lengthSamples });
-            pattern.nextOnSample += periodSamples;
-            pattern.currentStep = (pattern.currentStep + 1) % static_cast<int> (pattern.notes.size());
+            pattern.lastEventIndex = eventIndex;
+            pattern.currentStep = static_cast<int> ((stepIndex + 1) % static_cast<int64_t> (pattern.notes.size()));
         }
-
-        if (eventsAdded >= maximumMidiEventsPerBlock)
-            pattern.nextOnSample = juce::jmax (1, pattern.nextOnSample);
     }
 
-    midiSequenceBeatPosition += (static_cast<double> (numSamples) / juce::jmax (1.0, preparedSampleRate))
-                                * (juce::jmax (20.0, bpm) / 60.0);
+    midiSequenceBeatPosition = blockEndBeat;
 }
 
 void MatDChucKAudioProcessor::stopActiveMidiNotes (juce::MidiBuffer& midiMessages)
@@ -1039,6 +1066,7 @@ void MatDChucKAudioProcessor::stopActiveMidiNotes (juce::MidiBuffer& midiMessage
     {
         pattern.nextOnSample = 0;
         pattern.currentStep = 0;
+        pattern.lastEventIndex = -1;
     }
 
     midiSequenceBeatPosition = 0.0;

@@ -85,12 +85,13 @@ private:
         double variationStartBeats = 0.0;
         double variationLengthBeats = 0.0;
         int nextOnSample = 0;
+        int64_t lastEventIndex = -1;
         bool tempoSync = false;
         bool enabled = true;
     };
 
     bool compileMidiProgram (const juce::String& text, juce::String& error);
-    void processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples, double bpm);
+    void processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples, const HostTransportState& transport);
     void stopActiveMidiNotes (juce::MidiBuffer& midiMessages);
     void addAllNotesOff (juce::MidiBuffer& midiMessages);
 
