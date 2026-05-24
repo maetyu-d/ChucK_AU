@@ -347,6 +347,9 @@ double sanitiseBpm (const OptionalDouble& bpm)
 }
 
 #if MATD_CHUCK_MIDI_FX
+constexpr size_t maximumPendingNoteOffs = 256;
+constexpr int maximumMidiEventsPerBlock = 96;
+
 int beatsToSamples (double sampleRate, double bpm, double beats)
 {
     const auto seconds = (60.0 / juce::jmax (20.0, bpm)) * juce::jmax (0.001, beats);
@@ -863,12 +866,14 @@ void MatDChucKAudioProcessor::updateHostGlobals (const HostTransportState& trans
 bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce::String& error)
 {
     std::vector<MidiPattern> parsed;
+    parsed.reserve (16);
     double cycleBeats = 0.0;
     const juce::StringArray lines = juce::StringArray::fromLines (text);
 
     const auto parsePitchList = [] (const juce::String& textToParse, std::vector<int>& notes)
     {
         notes.clear();
+        notes.reserve (16);
         const auto pitchTokens = juce::StringArray::fromTokens (textToParse, ",", {});
 
         for (const auto& pitch : pitchTokens)
@@ -941,6 +946,7 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
     const juce::ScopedLock lock (stateLock);
     midiPatterns = std::move (parsed);
     pendingNoteOffs.clear();
+    pendingNoteOffs.reserve (maximumPendingNoteOffs);
     midiSequenceBeatPosition = 0.0;
     midiSequenceCycleBeats = cycleBeats;
     wasTransportPlaying = false;
@@ -949,10 +955,14 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
 
 void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples, double bpm)
 {
-    const juce::ScopedLock lock (stateLock);
+    const juce::ScopedTryLock lock (stateLock);
+    if (! lock.isLocked())
+        return;
+
     const auto cycleBeat = midiSequenceCycleBeats > 0.0
                                ? std::fmod (midiSequenceBeatPosition, midiSequenceCycleBeats)
                                : midiSequenceBeatPosition;
+    auto eventsAdded = 0;
 
     for (auto it = pendingNoteOffs.begin(); it != pendingNoteOffs.end();)
     {
@@ -960,6 +970,7 @@ void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages
         if (it->second <= 0)
         {
             midiMessages.addEvent (juce::MidiMessage::noteOff (1, it->first), 0);
+            ++eventsAdded;
             it = pendingNoteOffs.erase (it);
         }
         else
@@ -986,16 +997,21 @@ void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages
                                                      : pattern.periodSamples;
 
         pattern.nextOnSample -= numSamples;
-        while (pattern.nextOnSample <= 0)
+        while (pattern.nextOnSample <= 0 && eventsAdded < maximumMidiEventsPerBlock)
         {
             const auto note = pattern.notes[static_cast<size_t> (pattern.currentStep % static_cast<int> (pattern.notes.size()))];
             const auto samplePosition = juce::jlimit (0, juce::jmax (0, numSamples - 1), numSamples + pattern.nextOnSample);
             midiMessages.addEvent (juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (pattern.velocity)),
                                    samplePosition);
-            pendingNoteOffs.push_back ({ note, lengthSamples });
+            ++eventsAdded;
+            if (pendingNoteOffs.size() < maximumPendingNoteOffs)
+                pendingNoteOffs.push_back ({ note, lengthSamples });
             pattern.nextOnSample += periodSamples;
             pattern.currentStep = (pattern.currentStep + 1) % static_cast<int> (pattern.notes.size());
         }
+
+        if (eventsAdded >= maximumMidiEventsPerBlock)
+            pattern.nextOnSample = juce::jmax (1, pattern.nextOnSample);
     }
 
     midiSequenceBeatPosition += (static_cast<double> (numSamples) / juce::jmax (1.0, preparedSampleRate))
@@ -1004,7 +1020,12 @@ void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages
 
 void MatDChucKAudioProcessor::stopActiveMidiNotes (juce::MidiBuffer& midiMessages)
 {
-    const juce::ScopedLock lock (stateLock);
+    const juce::ScopedTryLock lock (stateLock);
+    if (! lock.isLocked())
+    {
+        addAllNotesOff (midiMessages);
+        return;
+    }
 
     if (! wasTransportPlaying && pendingNoteOffs.empty())
         return;
