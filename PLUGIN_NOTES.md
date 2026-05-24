@@ -75,9 +75,10 @@ The MIDI FX plugin also follows the host transport and stops pending notes when 
 ```text
 note <pitch> <velocity> <lengthMs> <periodMs>
 arp <comma-separated-pitches> <velocity> <lengthBeats> <stepBeats>
+variation <startBeats> <durationBeats> <pitches> <velocity> <lengthBeats> <stepBeats>
 ```
 
-`note` is a fixed millisecond note repeater. `arp` steps through pitches and follows the host tempo.
+`note` is a fixed millisecond note repeater. `arp` steps through pitches and follows the host tempo. `variation` cycles timed arp sections over the transport.
 
 Arpeggio examples are included here:
 

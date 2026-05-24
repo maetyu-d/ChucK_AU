@@ -273,8 +273,13 @@ juce::String midiDefaultProgram()
 # Commands:
 # note <pitch> <velocity> <lengthMs> <periodMs>
 # arp <comma-separated-pitches> <velocity> <lengthBeats> <stepBeats>
+# variation <startBeats> <durationBeats> <pitches> <velocity> <lengthBeats> <stepBeats>
 
-arp 48,51,55,58,60,58,55,51 96 0.25 0.25
+variation 0 8 48,51,55,58,60,58,55,51 96 0.25 0.25
+variation 8 8 48,55,60,63,67,63,60,55 100 0.25 0.25
+variation 16 8 51,58,63,67,70,67,63,58 96 0.25 0.125
+variation 24 8 43,48,55,58,60,67,70,75 104 0.125 0.125
+variation 32 8 60,58,55,51,48,51,55,58 88 0.5 0.25
 )midi";
 }
 
@@ -283,10 +288,15 @@ juce::String midiArpeggioProgram()
     return R"midi(# Live ChucK MIDI FX arpeggio
 # Commands:
 # arp <comma-separated-pitches> <velocity> <lengthBeats> <stepBeats>
+# variation <startBeats> <durationBeats> <pitches> <velocity> <lengthBeats> <stepBeats>
 #
-# This follows Logic's tempo and emits one note per sixteenth note.
+# This follows Logic's tempo and cycles through five variations.
 
-arp 48,51,55,58,60,58,55,51 96 0.25 0.25
+variation 0 8 48,51,55,58,60,58,55,51 96 0.25 0.25
+variation 8 8 48,55,60,63,67,63,60,55 100 0.25 0.25
+variation 16 8 51,58,63,67,70,67,63,58 96 0.25 0.125
+variation 24 8 43,48,55,58,60,67,70,75 104 0.125 0.125
+variation 32 8 60,58,55,51,48,51,55,58 88 0.5 0.25
 )midi";
 }
 
@@ -666,6 +676,7 @@ void MatDChucKAudioProcessor::stopCode()
     const juce::ScopedLock lock (stateLock);
     midiPatterns.clear();
     pendingNoteOffs.clear();
+    midiSequenceBeatPosition = 0.0;
     prepared.store (false, std::memory_order_release);
     midiPanicRequested.store (true, std::memory_order_release);
     statusText = "Stopped";
@@ -714,6 +725,7 @@ void MatDChucKAudioProcessor::panic()
         pattern.nextOnSample = 0;
         pattern.currentStep = 0;
     }
+    midiSequenceBeatPosition = 0.0;
     midiPanicRequested.store (true, std::memory_order_release);
     statusText = "Panic sent";
 #else
@@ -851,7 +863,19 @@ void MatDChucKAudioProcessor::updateHostGlobals (const HostTransportState& trans
 bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce::String& error)
 {
     std::vector<MidiPattern> parsed;
+    double cycleBeats = 0.0;
     const juce::StringArray lines = juce::StringArray::fromLines (text);
+
+    const auto parsePitchList = [] (const juce::String& textToParse, std::vector<int>& notes)
+    {
+        notes.clear();
+        const auto pitchTokens = juce::StringArray::fromTokens (textToParse, ",", {});
+
+        for (const auto& pitch : pitchTokens)
+            notes.push_back (juce::jlimit (0, 127, pitch.getIntValue()));
+
+        return ! notes.empty();
+    };
 
     for (auto line : lines)
     {
@@ -876,13 +900,7 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
         if (tokens.size() == 5 && tokens[0] == "arp")
         {
             MidiPattern pattern;
-            pattern.notes.clear();
-            const auto pitchTokens = juce::StringArray::fromTokens (tokens[1], ",", {});
-
-            for (const auto& pitch : pitchTokens)
-                pattern.notes.push_back (juce::jlimit (0, 127, pitch.getIntValue()));
-
-            if (pattern.notes.empty())
+            if (! parsePitchList (tokens[1], pattern.notes))
             {
                 error = "Arp needs at least one pitch";
                 return false;
@@ -896,13 +914,35 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
             continue;
         }
 
-        error = "Expected: note <pitch> <velocity> <lengthMs> <periodMs> or arp <pitches> <velocity> <lengthBeats> <stepBeats>";
+        if (tokens.size() == 7 && tokens[0] == "variation")
+        {
+            MidiPattern pattern;
+            if (! parsePitchList (tokens[3], pattern.notes))
+            {
+                error = "Variation needs at least one pitch";
+                return false;
+            }
+
+            pattern.variationStartBeats = juce::jmax (0.0, tokens[1].getDoubleValue());
+            pattern.variationLengthBeats = juce::jlimit (0.01, 256.0, tokens[2].getDoubleValue());
+            pattern.velocity = juce::jlimit (1, 127, tokens[4].getIntValue());
+            pattern.lengthBeats = juce::jlimit (0.01, 16.0, tokens[5].getDoubleValue());
+            pattern.periodBeats = juce::jlimit (0.01, 16.0, tokens[6].getDoubleValue());
+            pattern.tempoSync = true;
+            cycleBeats = juce::jmax (cycleBeats, pattern.variationStartBeats + pattern.variationLengthBeats);
+            parsed.push_back (std::move (pattern));
+            continue;
+        }
+
+        error = "Expected: note <pitch> <velocity> <lengthMs> <periodMs>, arp <pitches> <velocity> <lengthBeats> <stepBeats>, or variation <startBeats> <durationBeats> <pitches> <velocity> <lengthBeats> <stepBeats>";
         return false;
     }
 
     const juce::ScopedLock lock (stateLock);
     midiPatterns = std::move (parsed);
     pendingNoteOffs.clear();
+    midiSequenceBeatPosition = 0.0;
+    midiSequenceCycleBeats = cycleBeats;
     wasTransportPlaying = false;
     return true;
 }
@@ -910,6 +950,9 @@ bool MatDChucKAudioProcessor::compileMidiProgram (const juce::String& text, juce
 void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages, int numSamples, double bpm)
 {
     const juce::ScopedLock lock (stateLock);
+    const auto cycleBeat = midiSequenceCycleBeats > 0.0
+                               ? std::fmod (midiSequenceBeatPosition, midiSequenceCycleBeats)
+                               : midiSequenceBeatPosition;
 
     for (auto it = pendingNoteOffs.begin(); it != pendingNoteOffs.end();)
     {
@@ -928,6 +971,15 @@ void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages
         if (! pattern.enabled)
             continue;
 
+        if (pattern.variationLengthBeats > 0.0
+            && (cycleBeat < pattern.variationStartBeats
+                || cycleBeat >= pattern.variationStartBeats + pattern.variationLengthBeats))
+        {
+            pattern.nextOnSample = 0;
+            pattern.currentStep = 0;
+            continue;
+        }
+
         const auto lengthSamples = pattern.tempoSync ? beatsToSamples (preparedSampleRate, bpm, pattern.lengthBeats)
                                                      : pattern.lengthSamples;
         const auto periodSamples = pattern.tempoSync ? beatsToSamples (preparedSampleRate, bpm, pattern.periodBeats)
@@ -945,6 +997,9 @@ void MatDChucKAudioProcessor::processMidiProgram (juce::MidiBuffer& midiMessages
             pattern.currentStep = (pattern.currentStep + 1) % static_cast<int> (pattern.notes.size());
         }
     }
+
+    midiSequenceBeatPosition += (static_cast<double> (numSamples) / juce::jmax (1.0, preparedSampleRate))
+                                * (juce::jmax (20.0, bpm) / 60.0);
 }
 
 void MatDChucKAudioProcessor::stopActiveMidiNotes (juce::MidiBuffer& midiMessages)
@@ -964,6 +1019,8 @@ void MatDChucKAudioProcessor::stopActiveMidiNotes (juce::MidiBuffer& midiMessage
         pattern.nextOnSample = 0;
         pattern.currentStep = 0;
     }
+
+    midiSequenceBeatPosition = 0.0;
 }
 
 void MatDChucKAudioProcessor::addAllNotesOff (juce::MidiBuffer& midiMessages)

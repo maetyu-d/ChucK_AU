@@ -82,6 +82,8 @@ private:
         int periodSamples = 24000;
         double lengthBeats = 0.25;
         double periodBeats = 0.25;
+        double variationStartBeats = 0.0;
+        double variationLengthBeats = 0.0;
         int nextOnSample = 0;
         bool tempoSync = false;
         bool enabled = true;
@@ -95,6 +97,8 @@ private:
     std::vector<MidiPattern> midiPatterns;
     std::vector<std::pair<int, int>> pendingNoteOffs;
     double preparedSampleRate = 44100.0;
+    double midiSequenceBeatPosition = 0.0;
+    double midiSequenceCycleBeats = 0.0;
     bool wasTransportPlaying = false;
     std::atomic<bool> midiPanicRequested { false };
 #else
